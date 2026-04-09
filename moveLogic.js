@@ -53,7 +53,7 @@ export default function move(gameState){
         right: { x: myHead.x + 1, y: myHead.y }
     };
 
-    for (const direction of Object.keys(nextPositions)) {
+    Object.keys(nextPositions).forEach(direction => {
         const nextPos = nextPositions[direction];
         const hitsSelf = myBody.some(
             segment => segment.x === nextPos.x && segment.y === nextPos.y
@@ -62,12 +62,27 @@ export default function move(gameState){
         if (hitsSelf) {
             moveSafety[direction] = false;
         }
-    }
+    });
     
     
     // TODO: Step 3 - Prevent your Battlesnake from colliding with other Battlesnakes
     // gameState.board.snakes contains an array of enemy snake objects, which includes their coordinates
     // https://docs.battlesnake.com/api/objects/battlesnake
+    gameState.board.snakes.forEach(snake => {
+        if (snake.id === gameState.you.id) {
+            return;
+        }
+
+        snake.body.forEach(segment => {
+            Object.keys(nextPositions).forEach(direction => {
+                const nextPos = nextPositions[direction];
+
+                if (segment.x === nextPos.x && segment.y === nextPos.y) {
+                    moveSafety[direction] = false;
+                }
+            });
+        });
+    });
     
     // Are there any safe moves left?
     
@@ -80,12 +95,44 @@ export default function move(gameState){
         return { move: "down" };
     }
     
-    // Choose a random move from the safe moves
-    const nextMove = safeMoves[Math.floor(Math.random() * safeMoves.length)];
-    
     // TODO: Step 4 - Move towards food instead of random, to regain health and survive longer
     // gameState.board.food contains an array of food coordinates https://docs.battlesnake.com/api/objects/board
-    
+    const food = gameState.board.food;
+    const allSnakeSegments = gameState.board.snakes.flatMap(snake => snake.body);
+
+    const moveChoices = safeMoves.map(direction => {
+        const nextPos = nextPositions[direction];
+        const adjacentPositions = [
+            { x: nextPos.x, y: nextPos.y + 1 },
+            { x: nextPos.x, y: nextPos.y - 1 },
+            { x: nextPos.x - 1, y: nextPos.y },
+            { x: nextPos.x + 1, y: nextPos.y }
+        ];
+
+        const escapeRoutes = adjacentPositions.filter(position => {
+            const inBounds = position.x >= 0 && position.x < boardWidth && position.y >= 0 && position.y < boardHeight;
+            const hitsSnake = allSnakeSegments.some(segment => segment.x === position.x && segment.y === position.y);
+            return inBounds && !hitsSnake;
+        }).length;
+
+        const foodDistance = food.length === 0 ? Infinity : Math.min(
+            ...food.map(foodPos => Math.abs(foodPos.x - nextPos.x) + Math.abs(foodPos.y - nextPos.y))
+        );
+
+        return { direction, escapeRoutes, foodDistance };
+    });
+
+    let bestMoves = moveChoices;
+    const mostEscapeRoutes = Math.max(...moveChoices.map(choice => choice.escapeRoutes));
+    bestMoves = bestMoves.filter(choice => choice.escapeRoutes === mostEscapeRoutes);
+
+    if (food.length > 0) {
+        const closestFoodDistance = Math.min(...bestMoves.map(choice => choice.foodDistance));
+        bestMoves = bestMoves.filter(choice => choice.foodDistance === closestFoodDistance);
+    }
+
+    const nextMove = bestMoves[Math.floor(Math.random() * bestMoves.length)].direction;
+
     console.log(`MOVE ${gameState.turn}: ${nextMove}`)
     return { move: nextMove };
 }
