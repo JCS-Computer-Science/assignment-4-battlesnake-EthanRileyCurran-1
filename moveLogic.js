@@ -23,6 +23,17 @@ function isInBounds(pos, boardWidth, boardHeight) {
     return pos.x >= 0 && pos.x < boardWidth && pos.y >= 0 && pos.y < boardHeight;
 }
 
+function countWallSides(pos, boardWidth, boardHeight) {
+    let walls = 0;
+
+    if (pos.x === 0) walls++;
+    if (pos.x === boardWidth - 1) walls++;
+    if (pos.y === 0) walls++;
+    if (pos.y === boardHeight - 1) walls++;
+
+    return walls;
+}
+
 function snakeCanEatNextTurn(snake, food) {
     const head = snake.body[0];
 
@@ -154,6 +165,15 @@ export default function move(gameState) {
 
     const moveChoices = [];
     const yourLength = getSnakeLength(you);
+    const openingMode = gameState.turn < 25 || yourLength < 8;
+    const enemySnakes = board.snakes.filter(function(snake) {
+        return snake.id !== you.id;
+    });
+    const isEndgame = enemySnakes.length === 1;
+    const onlyEnemy = isEndgame ? enemySnakes[0] : null;
+    const enemyLength = onlyEnemy ? getSnakeLength(onlyEnemy) : 0;
+    const aggressiveEndgame = isEndgame && yourLength > enemyLength;
+    const pressureEndgame = isEndgame && yourLength >= enemyLength;
 
     for (let i = 0; i < DIRECTION_NAMES.length; i++) {
         const direction = DIRECTION_NAMES[i];
@@ -164,6 +184,8 @@ export default function move(gameState) {
 
         const nextPos = add(myHead, DIRECTIONS[direction]);
         const nextKey = posKey(nextPos);
+        let enemyDistanceBonus = 0;
+        let enemyTrapBonus = 0;
 
         if (!isInBounds(nextPos, boardWidth, boardHeight)) {
             continue;
@@ -183,7 +205,7 @@ export default function move(gameState) {
                 continue;
             }
 
-            const enemyHead = snake.body[0];
+            const enemyHead = snake.head || snake.body[0];
             const enemyLength = getSnakeLength(snake);
             const enemyHeadDistance = manhattan(nextPos, enemyHead);
 
@@ -219,6 +241,20 @@ export default function move(gameState) {
                 if (enemySafeMoves <= 2) {
                     forceWinPressure++;
                 }
+
+                const wallSides = countWallSides(enemyHead, boardWidth, boardHeight);
+
+                if (enemyLength < yourLength) {
+                    if (wallSides >= 1 && enemySafeMoves <= 1) {
+                        forceWinPressure += 2;
+                    } else if (wallSides >= 1 && enemySafeMoves === 2) {
+                        forceWinPressure += 1;
+                    }
+
+                    if (wallSides === 2 && enemySafeMoves <= 2) {
+                        forceWinPressure += 2;
+                    }
+                }
             } else if (enemyLength < yourLength && enemyHeadDistance === 2) {
                 // Smaller enemy is close enough that we may be able to force next turn.
                 forceWinPressure += 0.5;
@@ -242,8 +278,35 @@ export default function move(gameState) {
         const foodDist = nearestFoodDistance(nextPos, food);
         let score = 0;
         let trapPenalty = 0;
+        let preyBonus = 0;
 
-        score += space * 3;
+        for (let j = 0; j < board.snakes.length; j++) {
+            const snake = board.snakes[j];
+            if (snake.id === you.id) {
+                continue;
+            }
+
+            const enemyHead = snake.head || snake.body[0];
+            const enemyLength = getSnakeLength(snake);
+            const dist = manhattan(nextPos, enemyHead);
+
+            if (enemyLength < yourLength && dist <= 4) {
+                preyBonus += 12 - dist * 2;
+            }
+        }
+
+        if (isEndgame) {
+            const enemyHeadForDistance = onlyEnemy.head || onlyEnemy.body[0];
+            const distToEnemy = manhattan(nextPos, enemyHeadForDistance);
+
+            if (aggressiveEndgame) {
+                enemyDistanceBonus += 20 - distToEnemy * 3;
+            } else if (pressureEndgame) {
+                enemyDistanceBonus += 6 - distToEnemy;
+            }
+        }
+
+        score += Math.min(space, yourLength + 10) * 2;
 
         if (space < yourLength) {
             trapPenalty += 200;
@@ -255,7 +318,7 @@ export default function move(gameState) {
             trapPenalty += 120;
         }
 
-        score += exits * 10;
+        score += exits * 6;
 
         for (let j = 0; j < board.snakes.length; j++) {
             const snake = board.snakes[j];
@@ -282,10 +345,16 @@ export default function move(gameState) {
                 score += 60 - foodDist * 8;
             } else if (you.health < 50) {
                 score += 30 - foodDist * 4;
-            } else {
+            } else if (openingMode) {
+                score += 24 - foodDist * 3;
+            } else if (!aggressiveEndgame) {
                 score += 10 - foodDist;
             }
         }
+
+        score += preyBonus;
+
+        score += enemyDistanceBonus;
 
         score -= manhattan(nextPos, center) * 0.75;
 
@@ -304,12 +373,55 @@ export default function move(gameState) {
             }
         }
 
+        if (aggressiveEndgame) {
+            const enemyHeadForTrap = onlyEnemy.head || onlyEnemy.body[0];
+            const wallSides = countWallSides(enemyHeadForTrap, boardWidth, boardHeight);
+            let enemySafeMovesAfterThis = 0;
+
+            for (let j = 0; j < DIRECTION_NAMES.length; j++) {
+                const enemyStep = add(enemyHeadForTrap, DIRECTIONS[DIRECTION_NAMES[j]]);
+                const stepKey = posKey(enemyStep);
+
+                if (!isInBounds(enemyStep, boardWidth, boardHeight)) {
+                    continue;
+                }
+
+                if (blocked[stepKey]) {
+                    continue;
+                }
+
+                if (enemyStep.x === nextPos.x && enemyStep.y === nextPos.y) {
+                    continue;
+                }
+
+                enemySafeMovesAfterThis++;
+            }
+
+            if (enemySafeMovesAfterThis <= 1) {
+                enemyTrapBonus += 80;
+            } else if (enemySafeMovesAfterThis === 2) {
+                enemyTrapBonus += 35;
+            }
+
+            if (wallSides >= 1 && enemySafeMovesAfterThis <= 1) {
+                enemyTrapBonus += 120;
+            } else if (wallSides >= 1 && enemySafeMovesAfterThis === 2) {
+                enemyTrapBonus += 45;
+            }
+
+            if (wallSides === 2 && enemySafeMovesAfterThis <= 2) {
+                enemyTrapBonus += 80;
+            }
+        }
+
+        score += enemyTrapBonus;
+
         if (winningHeadPressure > 0 && space > yourLength + 2 && exits >= 2) {
-            score += winningHeadPressure * 25;
+            score += winningHeadPressure * (aggressiveEndgame ? 45 : 25);
         }
 
         if (forceWinPressure > 0 && space > yourLength + 1 && exits >= 2) {
-            score += forceWinPressure * 20;
+            score += forceWinPressure * (aggressiveEndgame ? 40 : 20);
         }
 
         moveChoices.push({

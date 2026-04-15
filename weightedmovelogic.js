@@ -1,0 +1,1 @@
+//each square has a certain weight attached to it. the blocks are given a value from 0 to 1 to tell the snake how safe those blocks are. 1 being the safest. 0 beimg the most dangerous, and then theres everything inbetween
